@@ -1,0 +1,68 @@
+pipeline {
+    agent any
+    environment {
+        SERVICE_CONNECTION = credentials('service_connection')
+        KEY_VAULT_NAME = 'your_key_vault_name'
+        STATE_RESOURCE_GROUP = credentials('state-resource-group')
+        STATE_STORAGE_CONTAINER = credentials('state-storage-container')
+        STATE_STORAGE_ACCOUNT = credentials('state-storage-account')
+        STATE_SAS_TOKEN = credentials('state-sas-token')
+        CLIENT_ID = credentials('client-id')
+        CLIENT_SECRET = credentials('client-secret')
+        SUBSCRIPTION_ID = credentials('subscription-id')
+        TENANT_ID = credentials('tenant-id')
+        VIRTUAL_MACHINE_PASSWORD = credentials('DevMachinePassword')
+    }
+    stages {
+        stage('Terraform Build') {
+            steps {
+                script {
+                    sh 'terraform -version'
+                }
+                
+                script {
+                    sh '''
+                    mkdir -p outputs
+
+                    # Terraform init and plan for Dev environment
+                    cd environments/dev
+                    terraform init -backend-config="resource_group_name=${STATE_RESOURCE_GROUP}" \
+                                   -backend-config="storage_account_name=${STATE_STORAGE_ACCOUNT}" \
+                                   -backend-config="container_name=${STATE_STORAGE_CONTAINER}" \
+                                   -backend-config="key=development/dev.terraform.tfstate" \
+                                   -backend-config="access_key=${STATE_SAS_TOKEN}" -force-copy
+                    terraform plan -var-file=varvalues/dev.tfvars \
+                                   -var="client_id=${CLIENT_ID}" \
+                                   -var="client_secret=${CLIENT_SECRET}" \
+                                   -var="tenant_id=${TENANT_ID}" \
+                                   -var="subscription_id=${SUBSCRIPTION_ID}" \
+                                   -var="prefixVmPassword=${VIRTUAL_MACHINE_PASSWORD}" \
+                                   -out="../outputs/dev.plan" -input=false
+                    '''
+                }
+                
+            }
+        }
+        stage('Development Environment') {
+            steps {
+                script {
+                    sh '''
+                    cd environments/dev
+                    terraform init -backend-config="resource_group_name=${STATE_RESOURCE_GROUP}" \
+                                   -backend-config="storage_account_name=${STATE_STORAGE_ACCOUNT}" \
+                                   -backend-config="container_name=${STATE_STORAGE_CONTAINER}" \
+                                   -backend-config="key=development/group/dev.terraform.tfstate" \
+                                   -backend-config="access_key=${STATE_SAS_TOKEN}"
+                    terraform apply -auto-approve ../outputs/dev.plan
+                    '''
+                }
+            }
+        }
+    }
+    post {
+        always {
+            archiveArtifacts artifacts: 'outputs/**', allowEmptyArchive: true
+        }
+    }
+}
+
